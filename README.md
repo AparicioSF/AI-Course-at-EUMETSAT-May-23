@@ -26,7 +26,7 @@ https://user-images.githubusercontent.com/33723271/193078794-41d574f6-84b4-4a84-
 ----
 Course schedule:
 
-![timschedule](https://user-images.githubusercontent.com/33723271/193778579-8caedb95-edbc-4716-82a5-5cc28e31a5bc.png)
 
 ----
-![sssssss](https://user-images.githubusercontent.com/33723271/201310554-b801d343-dffa-47cb-b052-143de7eea4f9.jpg)
+<img width="524" alt="agenda23" src="https://github.com/AparicioSF/AI-Course-at-EUMETSAT-May-23/assets/33723271/ac45c39b-415f-4735-bf57-ee9449a2e6b3">
+
