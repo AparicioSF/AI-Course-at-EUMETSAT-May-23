@@ -1,0 +1,227 @@
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//S. Aparício (Solenix), I. Alonso (Solenix)  ☁☁☁\_(ツ)_/☁☁☁😀
+// 
+//MIT LICENSE CC BY EUMETSAT
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//🔥🛰️
+// Session 1 “Hands-on: Classification of fire burns"
+//SOLUTIONS
+
+///////////////////////////////////////////////////////////////////////////
+//////////////////////   VISUALIZING DEFINED AOI           ////////////////
+///////////////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 1**___
+
+var AOI = AOI_Portugal //AOI_Portugal or AOI_Lassen or AOI_Catalunia
+Map.addLayer(AOI, {'color': 'FF0000'}, 'PT', false);    
+Map.centerObject(AOI, 10)
+
+///////////////////////////////////////////////////////////////////////////
+//////////////    PREPARING SATELLITE IMAGERY     /////////////////////////
+///////////////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 2**___  
+
+//Selecting date range - after the fire
+var start = ee.Date('2017-08-10');  //Lassen  '2021-09-15'  // Portugal '2017-08-10' //Catalunia '2022-06-19'  //Afghanistan '2022-05-25' 
+var finish = ee.Date('2017-09-10'); //Lassen  '2021-09-17'  // Portugal '2017-09-10' //Catalunia  '2022-06-20' //Afghanistan '2022-06-05' 
+
+//Selecting date range - before the fire
+var startpast = ee.Date('2016-08-10' );  //Lassen '2021-07-12'    //Portugal '2016-08-10' //Catalunia '2022-02-28' //Afghanistan '2022-05-01'
+var finishpast = ee.Date('2016-09-10'); //Lassen  '2021-07-14'    //Portugal '2016-09-10' //Catalunia '2022-03-02' //Afghanistan '2022-05-07'
+
+////////////// CREATING COLLECTION OF IMAGES///////////////////////////////
+//______________
+//_**STEP 3**___
+
+//Sentinel-2 collection after the fire
+var S2after = ee.ImageCollection('COPERNICUS/S2')
+        .filterDate(start, finish)                               
+        .filterBounds(AOI)                                         
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 1)); 
+        
+//Sentinel-2 collection before the fire
+var S2before = ee.ImageCollection('COPERNICUS/S2')
+        .filterDate(startpast, finishpast)                  
+        .filterBounds(AOI)                                     
+        .sort('CLOUD_COVER')
+        .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 1)); 
+
+////////////// CLOUD MASK FUNCTION ///////////////////////////////
+//______________
+//_**STEP 4**___
+//Cloud mask S2 function
+function maskS2clouds(image) {
+  var qa = image.select('QA60');
+
+  // Bits 10 and 11 are clouds and cirrus, respectively.
+  var cloudBitMask = ee.Number(2).pow(10).int();  //Math.pow(2,10)
+  var cirrusBitMask = ee.Number(2).pow(11).int(); //Math.pow(2,11)
+
+  // Both flags should be set to zero, indicating clear conditions.
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0).and(
+             qa.bitwiseAnd(cirrusBitMask).eq(0));
+
+  // Return the masked and scaled data.
+  return image.updateMask(mask); // add >>>> .divide(10000) >>>Diving by 10000 converts toa
+}
+
+/////////// APPLY CLOUD MASK FUNCTION TO ALL IMAGES IN THE COLLECTION///////////////////////////////
+//______________
+//_**STEP 5**___
+
+//Applying the function to remove clouds to all the collection
+var S2Acloudfree = S2after.map(maskS2clouds);
+var S2Bcloudfree = S2before.map(maskS2clouds);
+
+/////////// CREATE A SINGLE IMAGE ///////////////////////////////
+//______________
+//_**STEP 6**___
+//Creating a single image with the median of the collection
+var S2A = ee.Image(S2Acloudfree.median());
+var S2B = ee.Image(S2Bcloudfree.median());
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+//////////////    VISUALIZING SATELLITE IMAGERY     /////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 7**___
+
+//Creating visualization settings for false color
+var False_vis = {
+  min: 260,
+  max: 4400,
+  gamma: 1.4,
+  bands: ['B8', 'B4', 'B3']
+};
+
+//Creating visualization settings for true color
+var rgb_vis = {
+  min: 0,
+  max: 2500,
+  gamma: 0.89,
+  bands: ['B4', 'B3', 'B2']
+};
+
+
+Map.addLayer(S2A.clip(AOI), False_vis, 'S2 After Fire (False Color)')
+Map.addLayer(S2B.clip(AOI), False_vis, 'S2 Before Fire (False Color)')
+
+Map.addLayer(S2A.clip(AOI), rgb_vis, 'S2 After Fire (True Color)')
+Map.addLayer(S2B.clip(AOI), rgb_vis, 'S2 Before Fire (True Color)')
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////// CREATING TRAINING DATASET ////////////////////////////////////////////////////////////
+/////////////////////////////////////////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 8**___
+
+//collect more training data on geometry imports>burn/noburn and selecting on the map
+
+
+//combine the polygons from both classes
+var polygons = burn.merge(noburn)
+
+//selectino of the bands to be used
+var bands = ['B2', 'B3', 'B4', 'B8']
+
+//______________
+//_**STEP 9**___
+//collecting training data
+var training = S2A.select(bands).sampleRegions({
+  collection: polygons,
+  properties: ['landcover'],
+  scale: 10
+});
+
+// Roughly 80% training, 20% testing.
+var split = 0.8;
+//Spliting with the split value after assigned random values
+var trainingRandom = training.randomColumn('random');
+
+var trainingSplit = trainingRandom.filter(ee.Filter.lt('random', split));    //for classification
+var testingSplit = trainingRandom.filter(ee.Filter.gte('random', split));    //for validation and accuracy
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+////////////// TRAINING THE MODEL /////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 10**___
+
+// Training classifiers with training (splited) data
+var trainedRF = ee.Classifier.smileRandomForest({
+                                    numberOfTrees: 21
+                                    }).train(trainingSplit, 'landcover', bands);
+
+
+/////////////////////////////////////////////////////////////
+////////////// RUN CLASSIFICATION  ///////////////////////////
+////////////////////////////////////////////////////////////
+//______________
+//_**STEP 11**___
+
+// Classify the Image with the same bands used for training.
+var classified   = S2A.select(bands).classify(trainedRF);
+
+
+
+/////////////////////////////////////////////////////////////
+////////////// VISUALIZE RESULTING CLASSIFICATION  /////////
+////////////////////////////////////////////////////////////
+//______________
+//_**STEP 12**___
+
+var visClassRFS1S2 = classified.visualize({
+                    min:0, 
+                    max:2, 
+                    palette: ['E6E600','A6FFE6']
+});
+
+
+Map.addLayer(classified.clip(AOI), {min: 0, max: 1, palette: ['green','red']}, 'RandomForest Burnt'); 
+
+
+//////////////////////////////////////////////////////////////////
+////////////// CALCULATING AREAS PER CLASS (OPTIONAL 1)  /////////
+//////////////////////////////////////////////////////////////////
+//______________
+//_**STEP 12**___
+
+
+var areaImage = ee.Image.pixelArea().addBands(
+      classified)
+ 
+var areas = areaImage.reduceRegion({
+      reducer: ee.Reducer.sum().group({
+      groupField: 1,
+      groupName: 'landcover',
+    }),
+    geometry: AOI_Portugal,
+    scale: 500,
+    maxPixels: 1e10
+    }); 
+ 
+print(areas)
+
+//////////////////////////////////////////////////////////////////
+////////////// CALCULATING AREAS PER CLASS (OPTIONAL 2)  /////////
+//////////////////////////////////////////////////////////////////
+
+//Select the class from the classified image
+var burnt = classified.select('classification').eq(1);//vegetation has 1 value in your case
+
+//Calculate the pixel area in square kilometer
+var area_burnt = burnt.multiply(ee.Image.pixelArea()).divide(1000*1000);
+
+//Reducing the statistics for your study area
+var stat = area_burnt.reduceRegion ({
+  reducer: ee.Reducer.sum(),
+  geometry: AOI_Portugal,
+  scale: 30,
+  maxPixels: 1e9
+});
+
+//Get the sq km area for vegetation
+print ('Burnt Area (in sq.km)', stat);
