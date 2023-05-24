@@ -1,0 +1,150 @@
+///////
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//S. Aparício (Solenix), I. Alonso (Solenix)  
+//
+//MIT LICENSE CC BY EUMETSAT
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//❄️☀️
+// Session 2 “Hands-on: Clustring two image of different seasons 
+// for change detection"
+// PARTICIPANT'S VERSION
+//
+//
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+//      EXERCICE 2: CLUSTER A S2 CLOUD FREE IMAGE OF ENDALEN (SVALBARD) 
+//  FROM TWO DIFFEREN SEASONS AND APPLY A CHANGE DETECTION BETWEEN THEM        
+//+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+
+/////////////////////////////////////////////////////////////////////////////
+//////////////////////   1. DEFINED AND VISUALIZE AOI           /////////////
+/////////////////////////////////////////////////////////////////////////////
+
+
+//Create a geometry over Endalen, in Svalbard - and name it AOI and visualize it
+
+
+//Center the visualization there
+Map.centerObject(AOI,10);
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////////////    2. PREPARING SATELLITE IMAGERY     /////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+//Define a "summer range date" with ee.Date could be from 2022-06-01 to 2022-08-28 > e.g. ee.Date('2022-01-01')
+//e.g. ee.Date('2022-01-01')
+
+var start = ee.Date('2022-06-01');
+var end = ee.Date('2022-08-28');
+
+//Define a "winter range date" could be from 2022-05-30 to 2022-07-02 
+var start2 = ee.Date('2022-05-30');
+var end2 = ee.Date('2022-07-02');
+
+//Create a summer collection
+var summerCol = ee.ImageCollection('COPERNICUS/S2')
+                    .filterDate(start,end)
+                    .filterBounds(AOI)
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',10))
+
+//Create a winter collection
+var winterCol = ee.ImageCollection('COPERNICUS/S2')
+                    .filterDate(start2,end2)
+                    .filterBounds(AOI)
+                    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE',5))
+
+var summerImage = summerCol.first()
+var winterImage = winterCol.first()
+
+var visRGB = {
+  min: 1400,
+  max: 9500,
+  gamma: 2.24,
+  bands: ['B4', 'B3', 'B2']
+};
+
+Map.addLayer(summerImage.clip(AOI), newVis, 'Sentinel-2 Summer Image')
+Map.addLayer(winterImage.clip(AOI), visRGB, 'Sentinel-2 Winter Image')
+
+Export.image.toDrive(summerImage)
+//////////////////////////////////////////////////////////////////////////////
+////////////    3. Create image of absolute differences        ///////////////
+////////////////////////////////////////////////////////////////////////////// 
+
+
+var changeCover = summerImage.subtract(winterImage).clip(AOI)
+Map.addLayer(changeCover.clip(AOI), {}, 'Reflectance Abs. differences Image')
+
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////    4. Collecting training data        /////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+
+//This sample function will return a FeatureCollection with 100 points
+//containing the spectral value of the image they are located on
+
+
+var training_data = changeCover.sample({
+                  region: AOI,
+                  scale:20,
+                  numPixels: 100
+})
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////    4. Create a cluster and train it   /////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+
+// The next stop is to create a clusterer object from one of the different
+
+var clusterKmeans = ee.Clusterer.wekaKMeans(3);
+
+// This is still need to be trained. This is done by
+//applying the train() function on the clusterer and passing in the
+//training data
+
+var trainedKmeans = clusterKmeans.train(training_data);
+
+
+//This cluster has now looked at all this points, and group them by similiarity
+// while these groups are as distinc as possible from other groups of points
+
+
+//When we apply this cluster to our image, it will take all pixels of the image
+//and determine, to which of these groups the pixel is most similar
+
+
+
+var clusteredImage = changeCover.cluster(trainedKmeans)
+
+
+//////////////////////////////////////////////////////////////////////////////
+//////////////    5. Visualize results              /////////////////////////
+//////////////////////////////////////////////////////////////////////////////
+
+
+var visCluster = {
+  min: 0,
+  max: 1,
+  palette: ['white', 'red']
+};
+
+Map.addLayer(clusteredImage.clip(AOI), visCluster, 'Clustered Change Image')
+
+///////////////////////////////////////////////////////////////////////
+/////////////// 6. EXTRA: EXPORTING WITH NICE VISUALIZATIONS///////////
+//////////////////////////////////////////////////////////////////////////////
+
+var finalImage = clusteredImage.clip(AOI)
+
+var visToExport = clusteredImage.visualize({
+  min:0, 
+  max:1,
+  palette: ['white', 'red']
+})
+
+Export.image.toDrive({
+  image: visToExport, 
+  description: 'Exporting_10m_resolution'
+});  
